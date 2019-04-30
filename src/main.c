@@ -5,6 +5,7 @@
 #include "board.h"
 #include "byteorder.h"
 #include "fmt.h"
+#include "periph/gpio.h"
 #include "tfa_thw.h"
 #include "tfa_thw_params.h"
 #include "xtimer.h"
@@ -49,6 +50,37 @@ static uint8_t buf[APP_LORAWAN_BUF_SIZE];
 #define DATALEN     (2U)
 static tfa_thw_t dev;
 static tfa_thw_data_t data[DATALEN];
+
+static char ka_stack[THREAD_STACKSIZE_DEFAULT];
+static gpio_t pins[] = { GPIO_PIN(1, 13), GPIO_PIN(1, 14), GPIO_PIN(1, 15) };
+
+/* helper function to increase power demand when using a power pack with
+ * dynamic shut off if energy usage is below certain threshold. Therefore
+ * connect some resistores, e.g. 220Ohm to, some or all pins defined above
+ * to increase power load. Also adapt sleep times as needed.
+ */
+void *_keep_alive(void *arg)
+{
+    (void) arg;
+    DEBUG("%s: init power drain pins\n", __func__);
+    for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
+        gpio_init(pins[i], GPIO_OUT);
+    }
+    while(1) {
+        DEBUG("%s: set power drain pins\n", __func__);
+        for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
+            gpio_set(pins[i]);
+        }
+        xtimer_sleep(1);
+        DEBUG("%s: clear power drain pins\n", __func__);
+        for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
+            gpio_clear(pins[i]);
+        }
+        DEBUG("%s: wait until next round\n", __func__);
+        xtimer_sleep(9);
+    }
+    return NULL;
+}
 
 static void _blink(bool fail)
 {
@@ -168,6 +200,14 @@ int main(void)
         DEBUG("[FAIL]\n");
         return 1;
     }
+    DEBUG("[DONE]\n");
+
+    DEBUG("create keep alive thread: ");
+    (void) thread_create(
+            ka_stack, sizeof(ka_stack),
+            THREAD_PRIORITY_MAIN,
+            THREAD_CREATE_WOUT_YIELD | THREAD_CREATE_STACKTEST,
+            _keep_alive, NULL, "_keep_alive");
     DEBUG("[DONE]\n");
 
     while(1) {

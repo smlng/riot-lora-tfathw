@@ -14,6 +14,8 @@ USEMODULE += fmt
 USEMODULE += tfa_thw
 USEMODULE += xtimer
 
+FEATURES_REQUIRED += periph_gpio
+
 # enable devel helpers
 DEVELHELP=0
 # pass config as CFLAGS
