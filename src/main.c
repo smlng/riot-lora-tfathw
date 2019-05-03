@@ -13,7 +13,7 @@
 #include "net/loramac.h"
 #include "semtech_loramac.h"
 
-#include "lora-keys.m11.h"
+#include "lora-keys.m13.h"
 #include "app_config.h"
 
 #define ENABLE_DEBUG        (1)
@@ -51,8 +51,10 @@ static uint8_t buf[APP_LORAWAN_BUF_SIZE];
 static tfa_thw_t dev;
 static tfa_thw_data_t data[DATALEN];
 
+static kernel_pid_t kpid = KERNEL_PID_UNDEF;
 static char ka_stack[THREAD_STACKSIZE_DEFAULT];
-static gpio_t pins[] = { GPIO_PIN(1, 13), GPIO_PIN(1, 14), GPIO_PIN(1, 15) };
+/* following pins are on CN1 in a row */
+static gpio_t pins[] = { GPIO_PIN(0, 9), GPIO_PIN(1, 12), GPIO_PIN(1, 6), GPIO_PIN(1, 13), GPIO_PIN(1, 14), GPIO_PIN(1, 15) };
 
 /* helper function to increase power demand when using a power pack with
  * dynamic shut off if energy usage is below certain threshold. Therefore
@@ -71,13 +73,13 @@ void *_keep_alive(void *arg)
         for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
             gpio_set(pins[i]);
         }
-        xtimer_sleep(1);
+        xtimer_usleep(1000000);
         DEBUG("%s: clear power drain pins\n", __func__);
         for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
             gpio_clear(pins[i]);
         }
         DEBUG("%s: wait until next round\n", __func__);
-        xtimer_sleep(9);
+        xtimer_usleep(4000000);
     }
     return NULL;
 }
@@ -191,6 +193,13 @@ int main(void)
     LED1_OFF;
     LED2_OFF;
     LED3_OFF;
+    DEBUG("create keep alive thread: ");
+    kpid = thread_create(
+            ka_stack, sizeof(ka_stack),
+            THREAD_PRIORITY_MAIN - 1,
+            THREAD_CREATE_WOUT_YIELD | THREAD_CREATE_STACKTEST,
+            _keep_alive, NULL, "_keep_alive");
+    DEBUG("[DONE]\n");
     /* Setup LoRa parameters and OTAA join */
     DEBUG("init network:\n");
     lorawan_setup(&g_loramac);
@@ -202,46 +211,39 @@ int main(void)
     }
     DEBUG("[DONE]\n");
 
-    DEBUG("create keep alive thread: ");
-    (void) thread_create(
-            ka_stack, sizeof(ka_stack),
-            THREAD_PRIORITY_MAIN,
-            THREAD_CREATE_WOUT_YIELD | THREAD_CREATE_STACKTEST,
-            _keep_alive, NULL, "_keep_alive");
-    DEBUG("[DONE]\n");
-
     while(1) {
         DEBUG("read data:\n");
         LED3_ON;
         if (tfa_thw_read(&dev, data, DATALEN) == 0) {
             if (data[0].id != data[1].id) {
                 DEBUG("! id mismatch !\n");
-                continue;
             }
             else if (data[0].type == data[1].type) {
                 DEBUG("! invalid data (1) !\n");
-                continue;
             }
             else if ((data[0].type + data[1].type) != 3) {
                 DEBUG("! invalid data (2) !\n");
-                continue;
-            }
-            tfa_thw_lorawan_buf_t tbuf;
-            if (data[0].type == 1) { /* temperature and humidity in data[0] */
-                create_buf(data[0].id, data[1].tempwind, data[0].tempwind,
-                           data[0].humidity, &tbuf);
             }
             else {
-                create_buf(data[0].id, data[0].tempwind, data[1].tempwind,
-                           data[1].humidity, &tbuf);
+                LED1_ON;
+                tfa_thw_lorawan_buf_t tbuf;
+                if (data[0].type == 1) { /* temperature and humidity in data[0] */
+                    create_buf(data[0].id, data[1].tempwind, data[0].tempwind,
+                               data[0].humidity, &tbuf);
+                }
+                else {
+                    create_buf(data[0].id, data[0].tempwind, data[1].tempwind,
+                               data[1].humidity, &tbuf);
+                }
+                lorawan_send(&g_loramac, tbuf.u8, sizeof(tbuf.u8));
+                LED1_OFF;
             }
-            lorawan_send(&g_loramac, tbuf.u8, sizeof(tbuf.u8));
-            LED3_OFF;
-            xtimer_sleep(APP_SLEEP_S);
         }
         else{
             DEBUG("! ERROR !\n");
         }
+        LED3_OFF;
+        xtimer_sleep(APP_SLEEP_S);
     }
 
     return 0;
