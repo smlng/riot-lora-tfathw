@@ -13,7 +13,7 @@
 #include "net/loramac.h"
 #include "semtech_loramac.h"
 
-#include "lora-keys.m13.h"
+#include "lora-keys.m11.h"
 #include "app_config.h"
 
 #define ENABLE_DEBUG        (1)
@@ -73,13 +73,13 @@ void *_keep_alive(void *arg)
         for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
             gpio_set(pins[i]);
         }
-        xtimer_usleep(1000000);
+        xtimer_sleep(1);
         DEBUG("%s: clear power drain pins\n", __func__);
         for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
             gpio_clear(pins[i]);
         }
         DEBUG("%s: wait until next round\n", __func__);
-        xtimer_usleep(4000000);
+        xtimer_sleep(9);
     }
     return NULL;
 }
