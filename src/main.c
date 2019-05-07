@@ -6,6 +6,8 @@
 #include "byteorder.h"
 #include "fmt.h"
 #include "periph/gpio.h"
+#include "periph/pm.h"
+#include "periph/rtc.h"
 #include "tfa_thw.h"
 #include "tfa_thw_params.h"
 #include "xtimer.h"
@@ -13,7 +15,7 @@
 #include "net/loramac.h"
 #include "semtech_loramac.h"
 
-#include "lora-keys.m11.h"
+#include "lora-keys.m15.h"
 #include "app_config.h"
 
 #define ENABLE_DEBUG        (1)
@@ -186,6 +188,12 @@ void lorawan_send(semtech_loramac_t *loramac, uint8_t *buf, uint8_t len)
     }
 }
 
+static void rtc_cb(void *arg)
+{
+    (void) arg;
+    pm_reboot();
+}
+
 int main(void)
 {
     /* set LED0 on */
@@ -193,6 +201,14 @@ int main(void)
     LED1_OFF;
     LED2_OFF;
     LED3_OFF;
+    DEBUG("set reboot alarm: ");
+    struct tm time;
+    rtc_get_time(&time);
+    time.tm_sec += APP_REBOOT_S;
+    mktime(&time);
+    rtc_set_alarm(&time, rtc_cb, NULL);
+    DEBUG("[DONE]\n");
+
     DEBUG("create keep alive thread: ");
     kpid = thread_create(
             ka_stack, sizeof(ka_stack),

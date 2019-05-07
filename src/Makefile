@@ -15,6 +15,7 @@ USEMODULE += tfa_thw
 USEMODULE += xtimer
 
 FEATURES_REQUIRED += periph_gpio
+FEATURES_REQUIRED += periph_rtc
 
 # enable devel helpers
 DEVELHELP=0
