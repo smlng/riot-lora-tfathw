@@ -10,6 +10,7 @@
 #define APP_LORAWAN_JOIN_RETRY_S    (23U)
 /* we must respect the duty cycle limitations */
 #define APP_SLEEP_S                 (37U)
+#define APP_ALIVE_S                 (10U)
 #define APP_REBOOT_S                (3600U)
 
 #endif

@@ -53,10 +53,14 @@ static uint8_t buf[APP_LORAWAN_BUF_SIZE];
 static tfa_thw_t dev;
 static tfa_thw_data_t data[DATALEN];
 
+static unsigned counter = 0;
 static kernel_pid_t kpid = KERNEL_PID_UNDEF;
 static char ka_stack[THREAD_STACKSIZE_DEFAULT];
 /* following pins are on CN1 in a row */
 static gpio_t pins[] = { GPIO_PIN(0, 9), GPIO_PIN(1, 12), GPIO_PIN(1, 6), GPIO_PIN(1, 13), GPIO_PIN(1, 14), GPIO_PIN(1, 15) };
+
+/* prototype */
+static void rtc_cb(void *arg);
 
 /* helper function to increase power demand when using a power pack with
  * dynamic shut off if energy usage is below certain threshold. Therefore
@@ -65,12 +69,10 @@ static gpio_t pins[] = { GPIO_PIN(0, 9), GPIO_PIN(1, 12), GPIO_PIN(1, 6), GPIO_P
  */
 void *_keep_alive(void *arg)
 {
-    (void) arg;
-    DEBUG("%s: init power drain pins\n", __func__);
-    for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
-        gpio_init(pins[i], GPIO_OUT);
-    }
+    (void)arg;
     while(1) {
+        msg_t m;
+        msg_receive(&m);
         DEBUG("%s: set power drain pins\n", __func__);
         for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
             gpio_set(pins[i]);
@@ -80,10 +82,7 @@ void *_keep_alive(void *arg)
         for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
             gpio_clear(pins[i]);
         }
-        DEBUG("%s: wait until next round\n", __func__);
-        xtimer_sleep(9);
     }
-    return NULL;
 }
 
 static void _blink(bool fail)
@@ -188,10 +187,29 @@ void lorawan_send(semtech_loramac_t *loramac, uint8_t *buf, uint8_t len)
     }
 }
 
+static void set_alive_alarm(void)
+{
+    struct tm time;
+    rtc_get_time(&time);
+    time.tm_sec += APP_ALIVE_S;
+    mktime(&time);
+    rtc_set_alarm(&time, rtc_cb, NULL);
+}
+
 static void rtc_cb(void *arg)
 {
     (void) arg;
-    pm_reboot();
+    counter++;
+    set_alive_alarm();
+    /* always trigger keep alive */
+    msg_t m;
+    msg_send(&m, kpid);
+    if ((counter * APP_ALIVE_S) >= APP_REBOOT_S) {
+        pm_reboot();
+        /* should not be reached, but just in case */
+        DEBUG("ooopsi\n");
+        counter = 0;
+    }
 }
 
 int main(void)
@@ -201,26 +219,39 @@ int main(void)
     LED1_OFF;
     LED2_OFF;
     LED3_OFF;
-    DEBUG("set reboot alarm: ");
-    struct tm time;
-    rtc_get_time(&time);
-    time.tm_sec += APP_REBOOT_S;
-    mktime(&time);
-    rtc_set_alarm(&time, rtc_cb, NULL);
+    DEBUG("%s: init power drain pins ... ", __func__);
+    for (unsigned i = 0; i < (sizeof(pins)/sizeof(gpio_t)); ++i) {
+        gpio_init(pins[i], GPIO_OUT);
+    }
     DEBUG("[DONE]\n");
-
-    DEBUG("create keep alive thread: ");
+    DEBUG("%s: create keep alive thread ... ", __func__);
     kpid = thread_create(
-            ka_stack, sizeof(ka_stack),
-            THREAD_PRIORITY_MAIN - 1,
-            THREAD_CREATE_WOUT_YIELD | THREAD_CREATE_STACKTEST,
-            _keep_alive, NULL, "_keep_alive");
+                ka_stack, sizeof(ka_stack),
+                THREAD_PRIORITY_MAIN - 1,
+                THREAD_CREATE_WOUT_YIELD | THREAD_CREATE_STACKTEST,
+                _keep_alive, NULL, "_keep_alive");
+    if (kpid < 0) {
+        DEBUG("[FAIL]\n");
+        LED0_ON;
+        LED1_ON;
+        LED2_ON;
+        LED3_ON;
+        return 1;
+    }
+    msg_t m;
+    msg_send(&m, kpid);
     DEBUG("[DONE]\n");
-    /* Setup LoRa parameters and OTAA join */
-    DEBUG("init network:\n");
-    lorawan_setup(&g_loramac);
 
-    DEBUG("init sensor: ");
+    DEBUG("%s: set alive alarm ... ", __func__);
+    set_alive_alarm();
+    DEBUG("[DONE]\n");
+
+    /* Setup LoRa parameters and OTAA join */
+    DEBUG("%s: init network ... ", __func__);
+    lorawan_setup(&g_loramac);
+    DEBUG("[DONE]\n");
+
+    DEBUG("%s: init sensor ... ", __func__);
     if (tfa_thw_init(&dev, &tfa_thw_params[0])) {
         DEBUG("[FAIL]\n");
         return 1;
@@ -228,7 +259,7 @@ int main(void)
     DEBUG("[DONE]\n");
 
     while(1) {
-        DEBUG("read data:\n");
+        DEBUG("%s: read data ... ", __func__);
         LED3_ON;
         if (tfa_thw_read(&dev, data, DATALEN) == 0) {
             if (data[0].id != data[1].id) {
@@ -253,6 +284,7 @@ int main(void)
                 }
                 lorawan_send(&g_loramac, tbuf.u8, sizeof(tbuf.u8));
                 LED1_OFF;
+                DEBUG("[DONE]\n");
             }
         }
         else{
